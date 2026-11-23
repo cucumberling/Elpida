@@ -1,0 +1,4 @@
+# Elpida 运行依赖（服务器上由 deploy/install.sh 装进虚拟环境）
+numpy>=1.24
+pandas>=2.0
+requests>=2.28

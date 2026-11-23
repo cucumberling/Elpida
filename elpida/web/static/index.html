@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Elpida 生猪</title>
+<style>
+:root{--bg:#11161c;--card:#171e26;--line:#26303b;--text:#c9d3de;--dim:#7f8c9a;--hi:#fff;--up:#ff6b6b;--down:#35c58a;
+  --accent:#5aa9ff;--warn:#f0b44c;--planned:#3a4552}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+header{position:sticky;top:0;z-index:5;background:#0d1217;border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+header b{color:var(--hi);font-size:17px;letter-spacing:.5px}
+nav{display:flex;gap:4px}
+nav button{background:none;border:0;color:var(--dim);font:inherit;padding:6px 12px;border-radius:6px;cursor:pointer}
+nav button.on{background:var(--card);color:var(--hi)}
+#hb{margin-left:auto;font-size:12px;color:var(--dim)}
+main{max-width:1200px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+.card h2{margin:0 0 10px;font-size:15px;color:var(--hi);font-weight:600}
+.note{color:var(--dim);font-size:12px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.layers{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.layer h3{margin:0 0 8px;font-size:12px;color:var(--dim);font-weight:500;letter-spacing:1px}
+.agent{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#141a21}
+.agent.planned{opacity:.55;border-style:dashed}
+.agent .t{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.agent .t b{color:var(--hi);font-weight:600}
+.badge{font-size:11px;padding:1px 7px;border-radius:9px;white-space:nowrap}
+.ok{background:#173a2c;color:var(--down)}.bad{background:#3d1d1f;color:var(--up)}.idle{background:var(--planned);color:var(--text)}
+.agent p{margin:4px 0 0;font-size:12px;color:var(--dim)}
+.agent button,.btn{margin-top:6px;background:#22303e;border:1px solid #304254;color:var(--text);border-radius:6px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--dim);font-weight:500}
+td:first-child,th:first-child{text-align:left}
+.scroll{overflow-x:auto}
+.chart{height:340px}.chart.sm{height:200px}
+.kpis{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:6px}
+.kpi span{display:block;font-size:12px;color:var(--dim)}.kpi b{font-size:20px;color:var(--hi);font-weight:600}
+.up{color:var(--up)}.down{color:var(--down)}
+.atm td{background:#1d2a37}
+.strike{text-align:center!important;color:var(--hi);font-weight:600;background:#1a222b}
+select{background:#141a21;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}
+.hide{display:none}
+svg text{fill:var(--dim);font-size:11px}
+@media (max-width:600px){main{padding:12px}.chart{height:260px}}
+</style>
+</head>
+<body>
+<header><b>Elpida</b><nav>
+  <button data-tab="sys" class="on">系统总览</button><button data-tab="hog">生猪行情</button><button data-tab="opt">期权定价</button>
+</nav><span id="hb"></span></header>
+<main>
+
+<section id="sys">
+  <div class="card"><h2>Agent 全景</h2><div id="map" class="layers"></div>
+    <p class="note">实线卡片是已经在运行的 agent；虚线是规划中、还没做的。总管每 30 秒检查一次谁该运行。</p></div>
+  <div class="grid">
+    <div class="card"><h2>数据</h2><div class="scroll"><table id="data"></table></div></div>
+    <div class="card"><h2>技能（skills）</h2><div class="scroll"><table id="skills"></table></div></div>
+  </div>
+  <div class="card"><h2>最近运行记录</h2><div class="scroll"><table id="runs"></table></div></div>
+</section>
+
+<section id="hog" class="hide">
+  <div class="card"><div class="kpis" id="hogkpi"></div>
+    <div id="kline" class="chart"></div>
+    <p class="note">主力连续（持仓量最大的合约，后复权）：换月前的价格整体平移过，K 线上的价格和真实合约价不一定一样，最新一段是真实价格。红涨绿跌。</p></div>
+  <div class="grid">
+    <div class="card"><h2>期限结构（各月份合约收盘价）</h2><div id="curve"></div>
+      <p class="note">实线：最新；虚线：约 20 个交易日前。远月高于近月叫「升水」，说明市场预期猪价上涨。</p></div>
+    <div class="card"><h2 id="spreadtitle">跨月价差</h2><div id="spread" class="chart sm"></div></div>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>期货猪粮比（生猪 ÷ 玉米）</h2><div id="ratio" class="chart sm"></div>
+      <p class="note">用期货主力价近似。行业常把现货猪粮比 5–6 附近看作养殖盈亏线，期货价含预期，只作参考。</p></div>
+    <div class="card"><h2>饲料：玉米、豆粕主力（元/吨）</h2><div id="feed" class="chart sm"></div></div>
+  </div>
+  <div class="card"><h2>在交易的生猪合约</h2><div class="scroll"><table id="contracts"></table></div>
+    <p class="note">期权到期日按「交割月前一个月第 12 个交易日」估算，没有扣节假日。个人客户须在交割月之前平仓。</p></div>
+</section>
+
+<section id="opt" class="hide">
+  <div class="card">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <h2 style="margin:0">生猪期权</h2><select id="optsel"></select><span class="note" id="optmeta"></span>
+    </div>
+    <div class="kpis" id="optkpi"></div>
+  </div>
+  <div class="card"><h2>波动率微笑（隐含波动率 vs 行权价）</h2><div id="smile"></div>
+    <p class="note" id="smilenote"></p></div>
+  <div class="card"><h2>T 型报价（元/吨；1 手 = <span id="mult">16</span> 吨）</h2><div class="scroll"><table id="tq"></table></div>
+    <p class="note">市场价＝买卖中间价（没有就用最新价）。理论价＝按 20 日历史波动率、美式二叉树算的价格；市场价高于理论价，说明期权比历史波动「贵」。
+      希腊值按隐含波动率算（没有隐含波动率时按历史波动率）：Delta＝期货涨 1 元期权涨多少；Vega＝波动率升 1 个百分点期权涨多少元；Theta＝每过一天期权变化多少元。</p></div>
+</section>
+</main>
+
+<script src="/static/lwc.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (x, n = 0) => x == null ? "–" : (Math.abs(x) < .5 * 10 ** -n ? 0 : Number(x)).toLocaleString("zh-CN", {minimumFractionDigits: n, maximumFractionDigits: n});
+const short = (s, n = 90) => (s = String(s ?? "")).length > n ? s.slice(0, n) + "…" : s;
+const pct = (x, n = 1) => x == null ? "–" : (x * 100).toFixed(n) + "%";
+const api = p => fetch(p, {credentials: "same-origin"}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const LW = window.LightweightCharts;
+const chartOpts = {autoSize: true, layout: {background: {color: "#171e26"}, textColor: "#8d9bab"},
+  grid: {vertLines: {color: "#1f2832"}, horzLines: {color: "#1f2832"}}, rightPriceScale: {borderColor: "#26303b"},
+  timeScale: {borderColor: "#26303b"}, localization: {locale: "zh-CN"}};
+const loaded = {};
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  for (const t of ["sys", "hog", "opt"]) $(t).classList.toggle("hide", t !== b.dataset.tab);
+  try { localStorage.setItem("tab", b.dataset.tab); } catch (e) {}
+  load(b.dataset.tab);
+});
+
+function load(tab) {
+  if (tab === "sys") return loadSys();
+  if (!loaded[tab]) { loaded[tab] = true; (tab === "hog" ? loadHog : loadOpt)().catch(e => { loaded[tab] = false; console.error(e); }); }
+}
+
+// ───────── 系统总览
+const LAYERS = ["采集", "分析", "汇总", "决策", "后台"];
+function ago(ts) {
+  if (!ts) return "";
+  const s = (Date.now() - new Date(ts).getTime()) / 1000;
+  return s < 90 ? "刚刚" : s < 3600 ? Math.round(s / 60) + " 分钟前" : s < 86400 ? Math.round(s / 3600) + " 小时前" : Math.round(s / 86400) + " 天前";
+}
+async function loadSys() {
+  const d = await api("/api/status");
+  const hb = d.heartbeat && d.heartbeat.at;
+  const alive = hb && (Date.now() - new Date(hb).getTime()) < 120e3;
+  $("hb").innerHTML = alive ? `总管在线 · ${ago(hb)}` : `<span class="up">总管离线${hb ? "（上次 " + ago(hb) + "）" : ""}</span>`;
+  const by = {};
+  for (const a of d.agents) (by[a.layer] = by[a.layer] || []).push(a);
+  by["展示"] = [{title: "Dashboard", state: "self", desc: "就是这个网站"}];
+  by["后台"] = [{title: "总管", state: "self", desc: "调度所有 agent、记录运行、失败重试、管理技能"}, ...(by["后台"] || [])];
+  $("map").innerHTML = [...LAYERS.slice(0, 4), "展示", "后台"].map(l => `<div class="layer"><h3>${l}</h3>${(by[l] || []).map(card).join("")}</div>`).join("");
+  document.querySelectorAll("[data-run]").forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = "已请求…";
+    const r = await fetch("/api/run", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({agent: b.dataset.run})}).then(r => r.json());
+    b.textContent = r.ok ? "已通知总管" : (r.error || "失败");
+    setTimeout(loadSys, 40e3);
+  });
+  $("data").innerHTML = "<tr><th>品种</th><th>合约数</th><th>K 线条数</th><th>最新日期</th></tr>" +
+    d.data.map(x => `<tr><td>${esc(x.name)} ${esc(x.product)}</td><td>${fmt(x.contracts)}</td><td>${fmt(x.rows)}</td><td>${esc(x.last_day || "–")}</td></tr>`).join("");
+  $("skills").innerHTML = "<tr><th>技能</th><th style='text-align:left'>说明</th></tr>" +
+    d.skills.map(s => `<tr><td>${esc(s.name)}</td><td style="text-align:left;white-space:normal">${esc(s.desc)}</td></tr>`).join("");
+  $("runs").innerHTML = "<tr><th>时间</th><th style='text-align:left'>Agent</th><th style='text-align:left'>触发</th><th style='text-align:left'>结果</th></tr>" +
+    d.recent_runs.map(r => `<tr><td>${esc((r.started_at || "").replace("T", " ").slice(5, 16))}</td><td style="text-align:left">${esc(r.agent)}</td>
+      <td style="text-align:left">${esc(r.trigger)}</td><td style="text-align:left;white-space:normal" class="${r.ok === 0 ? "up" : ""}">${r.finished_at ? esc(r.message) : "运行中…"}</td></tr>`).join("") ||
+    "<tr><td colspan=4 class=note>还没有运行记录</td></tr>";
+}
+function card(a) {
+  if (a.state === "planned") return `<div class="agent planned"><div class="t"><b>${esc(a.title)}</b><span class="badge idle">第 ${a.phase} 阶段</span></div><p>${esc(a.desc)}</p></div>`;
+  if (a.state === "self") return `<div class="agent"><div class="t"><b>${esc(a.title)}</b><span class="badge ok">运行中</span></div><p>${esc(a.desc)}</p></div>`;
+  const l = a.last;
+  const badge = !l ? `<span class="badge idle">未运行</span>` : !l.finished_at ? `<span class="badge idle">运行中</span>` :
+    l.ok ? `<span class="badge ok">正常</span>` : `<span class="badge bad">失败</span>`;
+  return `<div class="agent"><div class="t"><b>${esc(a.title)}</b>${badge}</div><p>${esc(a.desc)}</p>
+    <p>${esc(a.schedule)}</p>${l ? `<p title="${esc(l.message || "")}">${ago(l.started_at)}：${esc(short(l.message))}</p>` : ""}
+    <button data-run="${esc(a.name)}">立即运行</button></div>`;
+}
+
+// ───────── 生猪行情
+async function loadHog() {
+  const d = await api("/api/hog");
+  if (d.empty) { $("hogkpi").innerHTML = `<span class="note">还没有行情数据。到「系统总览」点行情数据的「立即运行」，几分钟后再来。</span>`; return; }
+  const b = d.bars, last = b[b.length - 1], prev = b[b.length - 2] || last;
+  const chg = last.raw_close - prev.raw_close, cls = chg >= 0 ? "up" : "down";
+  $("hogkpi").innerHTML = `<div class="kpi"><span>主力 ${esc(d.main)}（${esc(d.last_day)}）</span><b class="${cls}">${fmt(last.raw_close)}</b></div>
+    <div class="kpi"><span>涨跌</span><b class="${cls}">${chg >= 0 ? "+" : ""}${fmt(chg)}（${pct(chg / prev.raw_close, 2)}）</b></div>
+    <div class="kpi"><span>持仓量</span><b>${fmt(last.hold)}</b></div><div class="kpi"><span>换月次数</span><b>${d.rolls}</b></div>`;
+  const ch = LW.createChart($("kline"), chartOpts);
+  const k = ch.addSeries(LW.CandlestickSeries, {upColor: "#ff6b6b", downColor: "#35c58a", wickUpColor: "#ff6b6b", wickDownColor: "#35c58a", borderVisible: false});
+  k.setData(b.map(x => ({time: x.time, open: x.open, high: x.high, low: x.low, close: x.close})));
+  const v = ch.addSeries(LW.HistogramSeries, {priceFormat: {type: "volume"}, priceScaleId: "v", lastValueVisible: false, priceLineVisible: false});
+  ch.priceScale("v").applyOptions({scaleMargins: {top: .8, bottom: 0}});
+  v.setData(b.map(x => ({time: x.time, value: x.volume, color: x.close >= x.open ? "#ff6b6b55" : "#35c58a55"})));
+  ch.timeScale().setVisibleLogicalRange({from: b.length - 250, to: b.length});
+  drawCurve(d);
+  if (d.spread) {
+    $("spreadtitle").textContent = `跨月价差：${d.spread.near} − ${d.spread.far}（元/吨）`;
+    lineChart("spread", [{data: d.spread.series, color: "#5aa9ff"}]);
+  } else $("spread").innerHTML = `<p class="note">只有一张在交易的合约，算不了价差。</p>`;
+  if (d.ratio.length) lineChart("ratio", [{data: d.ratio, color: "#f0b44c"}]);
+  const colors = {C: "#f0b44c", M: "#b48cff"};
+  lineChart("feed", Object.entries(d.related).map(([p, r]) => ({data: r.series, color: colors[p] || "#5aa9ff", title: r.name})));
+  $("contracts").innerHTML = "<tr><th>合约</th><th>收盘</th><th>持仓</th><th>期权到期（估）</th><th>个人平仓截止</th></tr>" +
+    d.curve.map(c => `<tr${c.contract === d.main ? ' class="atm"' : ""}><td>${esc(c.contract)}${c.contract === d.main ? " 主力" : ""}</td>
+      <td>${fmt(c.close)}</td><td>${fmt(c.hold)}</td><td>${esc(c.expiry)}</td><td>${esc(c.exit_by)}</td></tr>`).join("");
+}
+function lineChart(id, series) {
+  const ch = LW.createChart($(id), chartOpts);
+  for (const s of series) ch.addSeries(LW.LineSeries, {color: s.color, lineWidth: 2, title: s.title || "", priceLineVisible: false}).setData(s.data);
+  ch.timeScale().fitContent();
+}
+// 小型 SVG 折线图（横轴是类别，比如合约月份或行权价）
+function svgLines(el, xs, lines, opts = {}) {
+  const W = Math.max(300, el.clientWidth || 560), H = opts.h || 240, L = 52, R = 12, T = 22, B = 28;
+  const vals = lines.flatMap(l => l.ys).filter(y => y != null);
+  if (!vals.length || !xs.length) { el.innerHTML = `<p class="note">没有数据</p>`; return; }
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (opts.hline != null) { lo = Math.min(lo, opts.hline); hi = Math.max(hi, opts.hline); }
+  const pad = (hi - lo) * .1 || Math.abs(hi) * .05 || 1; lo -= pad; hi += pad;
+  const X = i => L + (xs.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (xs.length - 1));
+  const Y = y => T + (hi - y) / (hi - lo) * (H - T - B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">`;
+  for (let i = 0; i <= 4; i++) { const y = lo + (hi - lo) * i / 4; s += `<line x1="${L}" x2="${W - R}" y1="${Y(y)}" y2="${Y(y)}" stroke="#1f2832"/><text x="${L - 6}" y="${Y(y) + 4}" text-anchor="end">${opts.fy ? opts.fy(y) : fmt(y)}</text>`; }
+  const every = Math.ceil(xs.length / Math.max(2, Math.floor((W - L) / 70)));
+  xs.forEach((x, i) => { if (i % every === 0) s += `<text x="${X(i)}" y="${H - 8}" text-anchor="middle">${esc(x)}</text>`; });
+  if (opts.hline != null) s += `<line x1="${L}" x2="${W - R}" y1="${Y(opts.hline)}" y2="${Y(opts.hline)}" stroke="#7f8c9a" stroke-dasharray="4 4"/><text x="${W - R}" y="${Y(opts.hline) - 4}" text-anchor="end">${esc(opts.hlabel || "")}</text>`;
+  if (opts.vline != null) s += `<line x1="${X(opts.vline)}" x2="${X(opts.vline)}" y1="${T}" y2="${H - B}" stroke="#7f8c9a" stroke-dasharray="2 4"/>`;
+  for (const l of lines) {
+    const pts = l.ys.map((y, i) => y == null ? null : `${X(i)},${Y(y)}`);
+    let path = "", pen = false;
+    pts.forEach(p => { if (!p) { pen = false; return; } path += (pen ? "L" : "M") + p; pen = true; });
+    s += `<path d="${path}" fill="none" stroke="${l.color}" stroke-width="2" ${l.dash ? 'stroke-dasharray="5 4"' : ""}/>`;
+    pts.forEach(p => { if (p) { const [x, y] = p.split(","); s += `<circle cx="${x}" cy="${y}" r="2.5" fill="${l.color}"/>`; } });
+  }
+  const leg = lines.filter(l => l.name).map((l, i) => `<text x="${L + 8 + i * 150}" y="12" style="fill:${l.color}">${esc(l.name)}</text>`).join("");
+  el.innerHTML = s + leg + "</svg>";
+}
+function drawCurve(d) {
+  const xs = d.curve.map(c => c.contract.slice(-4));
+  const prev = Object.fromEntries(d.curve_prev.points.map(p => [p.contract.slice(-4), p.close]));
+  svgLines($("curve"), xs, [{ys: d.curve.map(c => c.close), color: "#5aa9ff", name: d.last_day},
+    {ys: xs.map(x => prev[x] ?? null), color: "#7f8c9a", dash: true, name: d.curve_prev.day}]);
+}
+
+// ───────── 期权定价
+let pricing = null;
+async function loadOpt() {
+  pricing = await api("/api/pricing");
+  const cs = pricing.contracts || [];
+  if (!cs.length) { $("optmeta").textContent = "还没有定价结果。到「系统总览」点期权定价的「立即运行」（需要先有行情数据）。"; return; }
+  const sel = $("optsel");
+  sel.innerHTML = cs.map((c, i) => `<option value="${i}">${esc(c.contract)}（${c.source === "market" ? "有市场报价" : "模型"}）</option>`).join("");
+  const firstMarket = cs.findIndex(c => c.source === "market");
+  sel.value = String(firstMarket >= 0 ? firstMarket : 0);
+  sel.onchange = () => showOpt(cs[+sel.value]);
+  showOpt(cs[+sel.value]);
+}
+function showOpt(c) {
+  $("optmeta").textContent = `计算于 ${(pricing.computed_at || "").replace("T", " ").slice(0, 16)} · 无风险利率 ${pct(pricing.risk_free)}${pricing.note ? " · " + pricing.note : ""}`;
+  $("mult").textContent = c.multiplier;
+  $("optkpi").innerHTML = [["期货价", fmt(c.future)], ["期权到期（估）", `${c.expiry}（${c.days} 天）`], ["平值隐含波动率", pct(c.atm_iv)],
+    ["20 日历史波动率", pct(c.hv20)], ["60 日历史波动率", pct(c.hv60)], ["数据", c.source === "market" ? "市场报价" : "无市场报价，模型生成"]]
+    .map(([k, v]) => `<div class="kpi"><span>${k}</span><b style="font-size:16px">${esc(v)}</b></div>`).join("");
+  const atm = c.rows.findIndex(r => r.strike === c.atm_strike);
+  // 微笑只用虚值一侧：行权价高于期货价用看涨，低于用看跌。深度实值期权几乎全是内在价值，反推的波动率很不准
+  const otm = c.rows.map(r => r.strike >= c.future ? r.call.iv : r.put.iv);
+  if (otm.some(x => x != null)) {
+    svgLines($("smile"), c.rows.map(r => fmt(r.strike)), [{ys: otm, color: "#5aa9ff", name: "隐含波动率（虚值一侧）"}],
+      {hline: c.hv20, hlabel: "20 日历史波动率", vline: atm, fy: y => (y * 100).toFixed(0) + "%", h: 260});
+    $("smilenote").textContent = "竖虚线是平值（最接近期货价的行权价）。左边用看跌、右边用看涨的报价（虚值期权）。两边翘起来叫「微笑」：市场为大跌或大涨付更高的价格。深度实值期权的 IV 在下表里仅供参考。";
+  } else {
+    $("smile").innerHTML = "";
+    $("smilenote").textContent = "这张合约没有市场期权报价，算不出隐含波动率。下面的表只有按历史波动率算的理论价。";
+  }
+  const side = s => [fmt(s.market, 1), fmt(s.theo, 1), pct(s.iv), fmt(s.delta, 2), fmt(s.vega, 1), fmt(s.theta, 1)];
+  const head = ["市场价", "理论价", "IV", "Delta", "Vega", "Theta"];
+  $("tq").innerHTML = `<tr><th colspan=6 style="text-align:center;color:var(--up)">看涨 Call</th><th></th><th colspan=6 style="text-align:center;color:var(--down)">看跌 Put</th></tr>
+    <tr>${head.map(h => `<th>${h}</th>`).join("")}<th class="strike">行权价</th>${head.map(h => `<th>${h}</th>`).join("")}</tr>` +
+    c.rows.map((r, i) => `<tr${i === atm ? ' class="atm"' : ""}>${side(r.call).map(x => `<td>${x}</td>`).join("")}<td class="strike">${fmt(r.strike)}</td>${side(r.put).map(x => `<td>${x}</td>`).join("")}</tr>`).join("");
+}
+
+let start = "sys";
+try { start = localStorage.getItem("tab") || "sys"; } catch (e) {}
+document.querySelector(`nav button[data-tab="${start}"]`)?.click();
+setInterval(() => { if (!$("sys").classList.contains("hide")) loadSys(); }, 60e3);
+</script>
+</body>
+</html>

@@ -73,3 +73,20 @@ def test_apis(server):
     assert get(server + "/api/run", cookie=ck, data=b'{"agent":"rm -rf"}')[0] == 400
     with db.session() as con:
         assert db.kv_get(con, "orchestrator:requests") == ["market_data"]
+
+
+def test_advice_and_sow_input(server):
+    ck = "elpida_key=secret-key"
+    adv = json.loads(get(server + "/api/advice", cookie=ck)[2])
+    assert adv["judge"] is None and adv["sows"] == {}
+    code, _, body = get(server + "/api/sows", cookie=ck, data=json.dumps({"month": "2026-10", "value": 4020}).encode())
+    assert code == 200 and json.loads(body)["sows"] == {"2026-10": 4020.0}
+    for bad in ({"month": "2026-13", "value": 4000}, {"month": "2026-10", "value": 40}, {"month": "x", "value": 1},
+                {"month": "2026-10", "value": "abc"}):
+        assert get(server + "/api/sows", cookie=ck, data=json.dumps(bad).encode())[0] == 400
+    assert get(server + "/api/sows", cookie=ck, data=b"[1]")[0] == 400
+    get(server + "/api/sows", cookie=ck, data=json.dumps({"month": "2026-10", "value": None}).encode())
+    with db.session() as con:
+        assert db.kv_get(con, "manual:sows") == {}
+        assert "fundamental" in db.kv_get(con, "orchestrator:requests")     # 录入后会让总管重算基本面
+    assert get(server + "/api/sows", data=b'{"month":"2026-10","value":4000}')[0] == 401

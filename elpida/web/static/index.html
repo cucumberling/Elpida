@@ -37,7 +37,7 @@ td:first-child,th:first-child{text-align:left}
 .scroll{overflow-x:auto}
 .chart{height:340px}.chart.sm{height:200px}
 .kpis{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:6px}
-.kpi span{display:block;font-size:12px;color:var(--dim)}.kpi b{font-size:20px;color:var(--hi);font-weight:600}
+.kpi>span{display:block;font-size:12px;color:var(--dim)}.kpi b{font-size:20px;color:var(--hi);font-weight:600;white-space:nowrap}
 .up{color:var(--up)}.down{color:var(--down)}
 .atm td{background:#1d2a37}
 .strike{text-align:center!important;color:var(--hi);font-weight:600;background:#1a222b}
@@ -49,11 +49,35 @@ svg text{fill:var(--dim);font-size:11px}
 </head>
 <body>
 <header><b>Elpida</b><nav>
-  <button data-tab="sys" class="on">系统总览</button><button data-tab="hog">生猪行情</button><button data-tab="opt">期权定价</button>
+  <button data-tab="adv" class="on">今日建议</button><button data-tab="sys">系统总览</button><button data-tab="hog">生猪行情</button><button data-tab="opt">期权定价</button>
 </nav><span id="hb"></span></header>
 <main>
 
-<section id="sys">
+<section id="adv">
+  <div class="card" id="decision"><p class="note">加载中…</p></div>
+  <div class="card"><h2>各时间范围的综合分</h2><div class="scroll"><table id="horizons"></table></div>
+    <p class="note">综合分 −1（强烈看空）到 +1（强烈看多）。加权 agent 按「权重 × 信心」合成；分歧越大，综合信心打折越多。</p></div>
+  <div class="card"><h2>各 agent 的答卷</h2><div class="scroll"><table id="answers"></table></div></div>
+  <div class="grid">
+    <div class="card"><h2>技术面分数走势（1 个月）</h2><div id="techchart" class="chart sm"></div>
+      <p class="note">柱子是技术面 1 个月分数（右轴，−1…+1），线是主力连续价格。</p></div>
+    <div class="card"><h2>期货隐含养殖利润（元/公斤）</h2><div id="profitchart" class="chart sm"></div>
+      <p class="note" id="costnote"></p></div>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>季节性：过去各年同期之后一个月涨跌</h2><div id="seas"></div></div>
+    <div class="card"><h2>能繁母猪存栏（万头，手工录入）</h2>
+      <p class="note">农业农村部每月公布（新闻里常见「全国能繁母猪存栏 xxxx 万头」）。至少录入 13 个月才能算同比；录入后基本面会自动重算。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+        <input id="sowm" type="month" style="background:#141a21;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px">
+        <input id="sowv" type="number" step="0.1" placeholder="例如 4020" style="width:120px;background:#141a21;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px">
+        <button class="btn" id="sowsave" style="margin:0">保存</button><span class="note" id="sowmsg"></span></div>
+      <div class="scroll" style="max-height:240px;overflow-y:auto"><table id="sowtable"></table></div></div>
+  </div>
+  <div class="card"><h2>判断历史</h2><div class="scroll"><table id="judgelog"></table></div></div>
+</section>
+
+<section id="sys" class="hide">
   <div class="card"><h2>Agent 全景</h2><div id="map" class="layers"></div>
     <p class="note">实线卡片是已经在运行的 agent；虚线是规划中、还没做的。总管每 30 秒检查一次谁该运行。</p></div>
   <div class="grid">
@@ -112,14 +136,14 @@ const loaded = {};
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
-  for (const t of ["sys", "hog", "opt"]) $(t).classList.toggle("hide", t !== b.dataset.tab);
+  for (const t of ["adv", "sys", "hog", "opt"]) $(t).classList.toggle("hide", t !== b.dataset.tab);
   try { localStorage.setItem("tab", b.dataset.tab); } catch (e) {}
   load(b.dataset.tab);
 });
 
 function load(tab) {
   if (tab === "sys") return loadSys();
-  if (!loaded[tab]) { loaded[tab] = true; (tab === "hog" ? loadHog : loadOpt)().catch(e => { loaded[tab] = false; console.error(e); }); }
+  if (!loaded[tab]) { loaded[tab] = true; ({hog: loadHog, opt: loadOpt, adv: loadAdv})[tab]().catch(e => { loaded[tab] = false; console.error(e); }); }
 }
 
 // ───────── 系统总览
@@ -232,6 +256,100 @@ function drawCurve(d) {
     {ys: xs.map(x => prev[x] ?? null), color: "#7f8c9a", dash: true, name: d.curve_prev.day}]);
 }
 
+// ───────── 今日建议
+const AGENT = {technical: "技术面", fundamental: "基本面", weighting: "加权", judge: "判断", sentiment: "消息面"};
+const HZ = {"1d": "1 天", "1w": "1 周", "1m": "1 个月", "3m": "3 个月", "6m": "6 个月"};
+const sc = x => x == null ? "–" : `<span class="${x > 0.15 ? "up" : x < -0.15 ? "down" : ""}">${x > 0 ? "+" : ""}${Number(x).toFixed(2)}</span>`;
+function bar(x) {   // −1…+1 的小横条
+  const w = Math.min(1, Math.abs(x || 0)) * 50, left = x >= 0 ? 50 : 50 - w;
+  return `<span style="display:inline-block;width:100px;height:8px;background:#1f2832;border-radius:4px;position:relative;vertical-align:middle">
+    <span style="position:absolute;left:${left}px;width:${w}px;height:8px;border-radius:4px;background:${x >= 0 ? "var(--up)" : "var(--down)"}"></span>
+    <span style="position:absolute;left:49px;width:2px;height:8px;background:#7f8c9a"></span></span>`;
+}
+let charts = [];
+async function loadAdv() {
+  const d = await api("/api/advice");
+  const j = d.judge;
+  if (!j) {
+    $("decision").innerHTML = `<p class="note">还没有判断结果。流水线是：行情数据 → 技术面、基本面 → 加权 → 判断，每个工作日收盘后自动跑；也可以到「系统总览」点行情数据的「立即运行」。</p>`;
+  } else {
+    const color = j.action === "做多" ? "var(--up)" : j.action === "做空" ? "var(--down)" : "var(--dim)";
+    const p = j.plan;
+    $("decision").innerHTML = `<div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+        <div><span class="note">${esc(j.asof)} 收盘后 · 生猪</span><div style="font-size:34px;font-weight:700;color:${color}">${esc(j.action)}
+          <span style="font-size:16px;font-weight:500">${esc(j.strength || "")}</span></div></div>
+        <div class="kpis" style="margin:0">
+          <div class="kpi"><span>合约</span><b style="font-size:16px">${esc(p.contract)}</b></div>
+          <div class="kpi"><span>参考价</span><b style="font-size:16px">${fmt(p.price)}</b></div>
+          ${p.stop ? `<div class="kpi"><span>止损（2 倍 ATR）</span><b style="font-size:16px">${fmt(p.stop)}</b></div>` : ""}
+          <div class="kpi"><span>每手风险</span><b style="font-size:16px">${fmt(p.risk_per_lot)} 元</b></div>
+          <div class="kpi"><span>做 1 手至少要资金</span><b style="font-size:16px">${fmt(p.capital_per_lot / 1e4)} 万</b></div>
+          <div class="kpi"><span>主分数 / 信心</span><b style="font-size:16px">${sc(j.score)} / ${fmt(j.confidence, 2)}</b></div>
+        </div></div>
+      ${j.warnings.length ? `<ul style="color:var(--warn);margin:10px 0 0;padding-left:20px">${j.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+      ${j.option_note ? `<p style="margin:8px 0 0">期权：${esc(j.option_note)}</p>` : ""}
+      <details style="margin-top:8px"><summary class="note" style="cursor:pointer">理由（${j.reasons.length} 条）</summary>
+        <ul style="margin:6px 0 0;padding-left:20px">${j.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul></details>
+      <p class="note" style="margin-bottom:0">每手风险 = 2 倍 ATR × ${p.multiplier} 吨；「至少要资金」按每笔最多亏总资金 0.5% 算（资金 = 每手风险 ÷ 0.5%）。个人账户须在 ${esc(p.exit_by)} 前平仓。规则版判断，只是分析参考，不自动下单。</p>`;
+  }
+  const w = d.weighting;
+  if (w) {
+    $("horizons").innerHTML = "<tr><th>时间范围</th><th>综合分</th><th></th><th>信心</th><th>分歧</th><th style='text-align:left'>参与（分数 × 占比）</th></tr>" +
+      Object.entries(w.horizons).map(([h, v]) => `<tr><td>${HZ[h] || h}</td><td>${sc(v.score)}</td><td>${bar(v.score)}</td><td>${fmt(v.confidence, 2)}</td><td>${fmt(v.dispersion, 2)}</td>
+        <td style="text-align:left">${v.parts.map(p => `${AGENT[p.agent] || esc(p.agent)} ${sc(p.score)} × ${Math.round(p.share * 100)}%`).join("　")}</td></tr>`).join("");
+    $("answers").innerHTML = "<tr><th>Agent</th><th>时间范围</th><th>分数</th><th>信心</th><th style='text-align:left'>理由</th></tr>" +
+      w.signals.map(s => `<tr><td>${AGENT[s.agent] || esc(s.agent)}</td><td>${HZ[s.horizon] || s.horizon}</td><td>${sc(s.score)}</td><td>${fmt(s.confidence, 2)}</td>
+        <td style="text-align:left;white-space:normal;min-width:280px">${esc(s.summary)}</td></tr>`).join("");
+  }
+  charts.forEach(c => c.remove()); charts = [];
+  const t = d.technical;
+  if (t && t.history.length) {
+    const ch = LW.createChart($("techchart"), chartOpts); charts.push(ch);
+    ch.addSeries(LW.LineSeries, {color: "#5aa9ff", lineWidth: 2, priceLineVisible: false}).setData(t.history.map(x => ({time: x.time, value: x.close})));
+    const hs = ch.addSeries(LW.HistogramSeries, {priceScaleId: "s", priceLineVisible: false, lastValueVisible: false});
+    ch.priceScale("s").applyOptions({scaleMargins: {top: .6, bottom: 0}});
+    hs.setData(t.history.map(x => ({time: x.time, value: x.s1m, color: x.s1m >= 0 ? "#ff6b6b88" : "#35c58a88"})));
+    ch.timeScale().fitContent();
+  }
+  const f = d.fundamental;
+  if (f && f.profit_history.length) {
+    const ch = LW.createChart($("profitchart"), chartOpts); charts.push(ch);
+    const ls = ch.addSeries(LW.LineSeries, {color: "#f0b44c", lineWidth: 2, priceLineVisible: false});
+    ls.setData(f.profit_history.map(x => ({time: x.time, value: x.profit})));
+    ls.createPriceLine({price: 0, color: "#7f8c9a", lineStyle: 2, lineWidth: 1, title: "盈亏线"});
+    ch.timeScale().fitContent();
+    const k = f.cost_assumptions;
+    $("costnote").textContent = `${f.profit.text}。成本按：料肉比 ${k.feed_per_kg}、饲料中玉米 ${k.corn_share * 100}% 豆粕 ${k.meal_share * 100}%（用期货价）、非饲料成本 ${k.non_feed_per_kg} 元/公斤估算，目前约 ${f.profit.cost_per_kg} 元/公斤。只是粗估，看方向和变化比看绝对值有用。`;
+  }
+  if (f) {
+    const ys = f.seasonality;
+    $("seas").innerHTML = ys.length ? `<div style="display:flex;gap:10px;align-items:flex-end;height:150px;padding:10px 0;border-bottom:1px solid var(--line)">` +
+      ys.map(x => { const hgt = Math.min(1, Math.abs(x.ret) / Math.max(...ys.map(y => Math.abs(y.ret)), 0.01)) * 100;
+        return `<div style="flex:1;text-align:center;font-size:12px"><div class="${x.ret >= 0 ? "up" : "down"}">${pct(x.ret)}</div>
+          <div style="height:${hgt}px;background:${x.ret >= 0 ? "var(--up)" : "var(--down)"};opacity:.7;border-radius:3px 3px 0 0;margin:4px auto 0;max-width:48px"></div></div>`; }).join("") +
+      `</div><div style="display:flex;gap:10px">${ys.map(x => `<div style="flex:1;text-align:center" class="note">${x.year}</div>`).join("")}</div>
+      <p class="note">从每年的今天这个日子起 30 天，主力连续的涨跌。生猪期货 2021 年才上市，年份少，只作参考。</p>` : `<p class="note">历史太短</p>`;
+  }
+  drawSows(d.sows || {});
+  $("judgelog").innerHTML = "<tr><th>日期</th><th>判断</th><th>主分数</th><th>信心</th><th>合约</th><th>参考价</th></tr>" +
+    (d.history || []).slice(-30).reverse().map(x => `<tr><td>${esc(x.asof)}</td><td>${esc(x.action)} ${esc(x.strength || "")}</td><td>${sc(x.score)}</td>
+      <td>${fmt(x.confidence, 2)}</td><td>${esc(x.contract)}</td><td>${fmt(x.price)}</td></tr>`).join("");
+}
+function drawSows(sows) {
+  const ms = Object.keys(sows).sort().reverse();
+  $("sowtable").innerHTML = "<tr><th>月份</th><th>存栏（万头）</th><th>同比</th><th></th></tr>" + (ms.map(m => {
+    const [y, mm] = m.split("-"), prev = sows[`${+y - 1}-${mm}`];
+    return `<tr><td>${esc(m)}</td><td>${fmt(sows[m], 1)}</td><td>${prev ? pct(sows[m] / prev - 1) : "–"}</td><td><button class="btn" style="margin:0" data-del="${esc(m)}">删除</button></td></tr>`;
+  }).join("") || "<tr><td colspan=4 class=note>还没有数据</td></tr>");
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => postSow({month: b.dataset.del, value: null}));
+}
+async function postSow(body) {
+  const r = await fetch("/api/sows", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
+  $("sowmsg").textContent = r.ok ? "已保存，总管半分钟内重算基本面" : (r.error || "保存失败");
+  if (r.ok) drawSows(r.sows);
+}
+$("sowsave").onclick = () => postSow({month: $("sowm").value, value: $("sowv").value});
+
 // ───────── 期权定价
 let pricing = null;
 async function loadOpt() {
@@ -269,8 +387,8 @@ function showOpt(c) {
     c.rows.map((r, i) => `<tr${i === atm ? ' class="atm"' : ""}>${side(r.call).map(x => `<td>${x}</td>`).join("")}<td class="strike">${fmt(r.strike)}</td>${side(r.put).map(x => `<td>${x}</td>`).join("")}</tr>`).join("");
 }
 
-let start = "sys";
-try { start = localStorage.getItem("tab") || "sys"; } catch (e) {}
+let start = "adv";
+try { start = localStorage.getItem("tab") || "adv"; } catch (e) {}
 document.querySelector(`nav button[data-tab="${start}"]`)?.click();
 setInterval(() => { if (!$("sys").classList.contains("hide")) loadSys(); }, 60e3);
 </script>

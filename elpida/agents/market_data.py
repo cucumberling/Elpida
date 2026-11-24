@@ -59,7 +59,7 @@ class MarketData(Agent):
         super().__init__(
             name="market_data", title="行情数据", layer="采集",
             desc="生猪、玉米、豆粕所有合约的日线（新浪），收盘后入库",
-            schedule=Schedule(times=("15:20", "17:30")), then=("pricing",))
+            schedule=Schedule(times=("15:20", "17:30")), then=("pricing", "technical", "fundamental"))
         self.fetch = fetch or sina.daily
         self.products = products or config.PRODUCTS
 

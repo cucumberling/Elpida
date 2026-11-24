@@ -26,3 +26,11 @@ PRODUCTS = {
 }
 
 RISK_FREE = float(os.environ.get("ELPIDA_RISK_FREE", "0.015"))   # 期权定价用的无风险利率（年化）
+
+# 养殖成本估算（基本面 agent 用来从期货价推算养殖利润）。都是行业常见量级的假设，不是精确数字，可以按实际改。
+HOG_COST = {
+    "feed_per_kg": float(os.environ.get("ELPIDA_FCR", "3.0")),            # 全程料肉比：每长 1 公斤活猪（含母猪、仔猪分摊）约耗 3 公斤饲料
+    "corn_share": 0.65, "meal_share": 0.20,                                # 饲料配方：玉米 65%、豆粕 20%
+    "other_feed_price": 3000.0,                                            # 其余 15%（麸皮、预混料等）按 3000 元/吨
+    "non_feed_per_kg": float(os.environ.get("ELPIDA_NONFEED", "5.5")),    # 非饲料成本（人工、防疫、折旧、财务等）元/公斤
+}

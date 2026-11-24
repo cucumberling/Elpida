@@ -82,4 +82,4 @@ def test_status_includes_planned():
     with db.session() as con:
         st = orchestrator.status(con, [Fake("a")])
     assert st[0]["state"] == "active"
-    assert {"judge", "weighting", "scholar", "evolution"} <= {s["name"] for s in st if s["state"] == "planned"}
+    assert {"news", "sentiment", "scholar", "evolution"} <= {s["name"] for s in st if s["state"] == "planned"}

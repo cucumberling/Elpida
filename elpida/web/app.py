@@ -6,6 +6,7 @@
 登录：链接里带 ?key=钥匙，第一次打开后记在浏览器里 30 天。钥匙在 ~/elpida-data/web_token。
 """
 import json
+import re
 import secrets
 import threading
 from http.cookies import SimpleCookie
@@ -16,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from elpida import config, db, orchestrator, registry
+from elpida.agents import fundamental, judge, technical, weighting
 from elpida.agents.pricing import KEY as PRICING_KEY
 from elpida.skills import continuous, dce
 
@@ -122,6 +124,34 @@ def hog_payload(con):
             "spread": spread, "related": related, "ratio": ratio, "rolls": int((main["adj"].diff() != 0).sum() - 1)}
 
 
+def advice_payload(con):
+    p = config.FOCUS
+    return {"judge": db.kv_get(con, judge.KEY.format(product=p)),
+            "history": db.kv_get(con, judge.LOG_KEY.format(product=p), []),
+            "weighting": db.kv_get(con, weighting.KEY.format(product=p)),
+            "technical": db.kv_get(con, technical.KEY.format(product=p)),
+            "fundamental": db.kv_get(con, fundamental.KEY.format(product=p)),
+            "sows": db.kv_get(con, fundamental.MANUAL_KEY, {})}
+
+
+def save_sows(con, body):
+    """网站录入能繁母猪存栏：{"month": "2026-10", "value": 3980}（万头）；value 为 null 表示删除这个月。"""
+    month = str(body.get("month", ""))
+    if not re.fullmatch(r"20\d\d-(0[1-9]|1[0-2])", month):
+        raise ValueError("月份格式要像 2026-10")
+    sows = db.kv_get(con, fundamental.MANUAL_KEY, {})
+    if body.get("value") in (None, ""):
+        sows.pop(month, None)
+    else:
+        v = float(body["value"])
+        if not 1000 <= v <= 10000:
+            raise ValueError("能繁母猪存栏单位是万头，正常在 3000–5000 左右")
+        sows[month] = round(v, 1)
+    db.kv_set(con, fundamental.MANUAL_KEY, dict(sorted(sows.items())))
+    orchestrator.request_run(con, "fundamental")      # 录入后让总管重算基本面（以及后面的加权、判断）
+    return sows
+
+
 def status_payload(con):
     hb = db.kv_get(con, orchestrator.HEARTBEAT_KEY)
     data = []
@@ -192,6 +222,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.js(status_payload(con))
             if u.path == "/api/hog":
                 return self.js(hog_payload(con))
+            if u.path == "/api/advice":
+                return self.js(advice_payload(con))
             if u.path == "/api/pricing":
                 return self.js(db.kv_get(con, PRICING_KEY.format(product=config.FOCUS)) or {"contracts": []})
         self.send(404, "not found", "text/plain; charset=utf-8")
@@ -201,12 +233,21 @@ class Handler(BaseHTTPRequestHandler):
         ok, _ = self.authed({})
         if not ok:
             return self.js({"error": "未登录"}, 401)
-        if u.path == "/api/run":
+        try:
+            n = min(int(self.headers.get("Content-Length") or 0), 10_000)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError
+        except ValueError:
+            return self.js({"error": "请求格式不对"}, 400)
+        if u.path == "/api/sows":
             try:
-                n = min(int(self.headers.get("Content-Length") or 0), 10_000)
-                body = json.loads(self.rfile.read(n) or b"{}")
-            except ValueError:
-                return self.js({"error": "请求格式不对"}, 400)
+                with db.session() as con:
+                    sows = save_sows(con, body)
+            except (ValueError, TypeError) as exc:
+                return self.js({"error": str(exc) or "数字不对"}, 400)
+            return self.js({"ok": True, "sows": sows})
+        if u.path == "/api/run":
             name = str(body.get("agent", ""))
             if name not in {a.name for a in registry.active_agents()}:
                 return self.js({"error": "没有这个 agent"}, 400)
